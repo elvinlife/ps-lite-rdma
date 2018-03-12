@@ -1,8 +1,9 @@
 #include "ps/ps.h"
+#include <cstdio>
 
 int main(int argc, char *argv[]) {
-  ps::Start(0);
+  ps::Start();
   // do nothing
-  ps::Finalize(0, true);
+  ps::Finalize();
   return 0;
 }

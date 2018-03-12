@@ -19,6 +19,7 @@ endif
 
 INCPATH = -I./src -I./include -I$(DEPS_PATH)/include
 CFLAGS = -std=c++11 -msse2 -fPIC -O3 -ggdb -Wall -finline-functions $(INCPATH) $(ADD_CFLAGS)
+CFLAGS += -libverbs -lmlx4
 
 all: ps test
 
@@ -33,7 +34,7 @@ lint:
 
 ps: build/libps.a
 
-OBJS = $(addprefix build/, customer.o postoffice.o van.o meta.pb.o)
+OBJS = $(addprefix build/, customer.o postoffice.o van.o meta.pb.o rdma.o)
 build/libps.a: $(OBJS)
 	ar crv $@ $(filter %.o, $?)
 

@@ -8,6 +8,7 @@
 #include <thread>
 #include <string>
 #include "ps/internal/van.h"
+#include "ps/internal/rdma.h"
 #if _MSC_VER
 #define rand_r(x) rand()
 #endif
@@ -33,17 +34,13 @@ class ZMQVan : public Van {
   virtual ~ZMQVan() { }
 
  protected:
-  void Start(int customer_id) override {
+  void Start() override {
     // start zmq
-    start_mu_.lock();
-    if (context_ == nullptr) {
-      context_ = zmq_ctx_new();
-      CHECK(context_ != NULL) << "create 0mq context failed";
-      zmq_ctx_set(context_, ZMQ_MAX_SOCKETS, 65536);
-    }
-    start_mu_.unlock();
+    context_ = zmq_ctx_new();
+    CHECK(context_ != NULL) << "create 0mq context failed";
+    zmq_ctx_set(context_, ZMQ_MAX_SOCKETS, 65536);
     // zmq_ctx_set(context_, ZMQ_IO_THREADS, 4);
-    Van::Start(customer_id);
+    Van::Start();
   }
 
   void Stop() override {
@@ -67,8 +64,7 @@ class ZMQVan : public Van {
     CHECK(receiver_ != NULL)
         << "create receiver socket failed: " << zmq_strerror(errno);
     int local = GetEnv("DMLC_LOCAL", 0);
-    std::string hostname = node.hostname.empty() ? "*" : node.hostname;
-    std::string addr = local ? "ipc:///tmp/" : "tcp://" + hostname + ":";
+    std::string addr = local ? "ipc:///tmp/" : "tcp://*:";
     int port = node.port;
     unsigned seed = static_cast<unsigned>(time(NULL)+port);
     for (int i = 0; i < max_retry+1; ++i) {
@@ -118,6 +114,136 @@ class ZMQVan : public Van {
   }
 
   int SendMsg(const Message& msg) override {
+    if (rdma_ready_)
+    {
+      int send_size = 0, send_bytes = 0;      //send_size is the msg size, send_bytes include int
+      int id = msg.meta.recver;
+      int n = msg.data.size();
+      for (int i = 0; i < n; i++)
+      {
+        SArray<char> data(msg.data[i]);
+        send_size += data.size();
+      }
+      bool if_head = false;
+      bool if_signaled = false;
+      send_bytes = send_size + n*sizeof(int);
+      char* send_addr = rdma_.InitData(id, send_bytes, &if_head, &if_signaled);
+      char* addr = send_addr;
+      addr += sizeof(int);                    //reserve the bytes to store meta_size
+      int meta_size;
+      PackMeta(msg.meta, &addr, &meta_size);
+      send_bytes += (sizeof(int) + meta_size);
+      send_size += meta_size;
+      addr -= sizeof(int);
+      *(int*)addr = meta_size;
+      addr = addr + sizeof(int) + meta_size;
+      for (int i = 0; i < n; i++)
+      {
+        SArray<char> data(msg.data[i]);
+        *(int*)addr = (int)data.size();
+        addr += sizeof(int);
+        memcpy(addr, data.data(), data.size());
+        addr += data.size();
+      }
+      bool if_terminate = (msg.meta.control.cmd == Control::TERMINATE);
+      uint32_t imm_data = (uint32_t)my_node_.id | (if_head ? 1<<17 : 0) 
+        | (if_terminate ? 1<<16 : 0) | (if_signaled ? 1<<18 : 0);
+      rdma_.SendData(id, (uint64_t)send_addr, send_bytes, imm_data);
+      return send_size;
+    }
+    else
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      // find the socket
+      int id = msg.meta.recver;
+      CHECK_NE(id, Meta::kEmpty);
+      auto it = senders_.find(id);
+      if (it == senders_.end()) {
+        LOG(WARNING) << "there is no socket to node " << id;
+        return -1;
+      }
+      void *socket = it->second;
+
+      // send meta
+      int meta_size; char* meta_buf;
+      PackMeta(msg.meta, &meta_buf, &meta_size);
+      int tag = ZMQ_SNDMORE;
+      int n = msg.data.size();
+      if (n == 0) tag = 0;
+      zmq_msg_t meta_msg;
+      zmq_msg_init_data(&meta_msg, meta_buf, meta_size, FreeData, NULL);
+      while (true) {
+        if (zmq_msg_send(&meta_msg, socket, tag) == meta_size) break;
+        if (errno == EINTR) continue;
+        LOG(WARNING) << "failed to send message to node [" << id
+                     << "] errno: " << errno << " " << zmq_strerror(errno);
+        return -1;
+      }
+      zmq_msg_close(&meta_msg);
+      int send_bytes = meta_size;
+
+      // send data
+      for (int i = 0; i < n; ++i) {
+        zmq_msg_t data_msg;
+        SArray<char>* data = new SArray<char>(msg.data[i]);
+        int data_size = data->size();
+        zmq_msg_init_data(&data_msg, data->data(), data->size(), FreeData, data);
+        if (i == n - 1) tag = 0;
+        while (true) {
+          if (zmq_msg_send(&data_msg, socket, tag) == data_size) break;
+          if (errno == EINTR) continue;
+          LOG(WARNING) << "failed to send message to node [" << id
+                       << "] errno: " << errno << " " << zmq_strerror(errno)
+                       << ". " << i << "/" << n;
+          return -1;
+        }
+        zmq_msg_close(&data_msg);
+        send_bytes += data_size;
+      }
+      return send_bytes;
+    }
+  }
+
+/*
+int SendMsg(const Message& msg) override {
+  if (rdma_ready_)
+  {
+    int send_size = 0, send_bytes = 0;      //send_size is the msg size, send_bytes include int
+    int id = msg.meta.recver;
+    int meta_size = 0;
+    int n = msg.data.size();
+    for (int i = 0; i < n; i++)
+    {
+      SArray<char> data(msg.data[i]);
+      send_size += data.size();
+    }
+    int offset;
+    send_bytes = send_size + n*sizeof(int);
+    char* addr = rdma_.InitData(id, send_bytes, &offset);
+    bool if_head = (offset == 0);
+    bool if_terminate = (msg.meta.control.cmd == Control::TERMINATE);
+    addr = addr + offset + sizeof(int);
+    PackMeta(msg.meta, &addr, &meta_size);
+    addr -= sizeof(int);
+    *(int*)addr = meta_size;
+    addr = addr + sizeof(int) + meta_size;
+    for (int i = 0; i < n; i++)
+    {
+      SArray<char> data(msg.data[i]);
+      *(int*)addr = (int)data.size();
+      addr += sizeof(int);
+      memcpy(addr, data.data(), data.size());
+      addr += data.size();
+    }
+    uint32_t imm_data = 0;
+    imm_data = (uint32_t)my_node_.id | (if_head ? 1<<17 : 0) | (if_terminate ? 1<<16 : 0);
+    send_bytes = send_bytes + meta_size + sizeof(int);
+    rdma_.SendData(id, offset, send_bytes, imm_data);
+    send_size += meta_size;
+    return send_size;
+  }
+  else
+  {
     std::lock_guard<std::mutex> lk(mu_);
     // find the socket
     int id = msg.meta.recver;
@@ -125,7 +251,6 @@ class ZMQVan : public Van {
     auto it = senders_.find(id);
     if (it == senders_.end()) {
       LOG(WARNING) << "there is no socket to node " << id;
-      std::cout << "there is not socket to node " << id << "\n";
       return -1;
     }
     void *socket = it->second;
@@ -141,9 +266,11 @@ class ZMQVan : public Van {
     while (true) {
       if (zmq_msg_send(&meta_msg, socket, tag) == meta_size) break;
       if (errno == EINTR) continue;
+      LOG(WARNING) << "failed to send message to node [" << id
+                   << "] errno: " << errno << " " << zmq_strerror(errno);
       return -1;
     }
-    // zmq_msg_close(&meta_msg);
+    zmq_msg_close(&meta_msg);
     int send_bytes = meta_size;
 
     // send data
@@ -161,58 +288,97 @@ class ZMQVan : public Van {
                      << ". " << i << "/" << n;
         return -1;
       }
-      // zmq_msg_close(&data_msg);
+      zmq_msg_close(&data_msg);
       send_bytes += data_size;
     }
     return send_bytes;
   }
-
+}
+*/
   int RecvMsg(Message* msg) override {
-    msg->data.clear();
-    size_t recv_bytes = 0;
-    for (int i = 0; ; ++i) {
-      zmq_msg_t* zmsg = new zmq_msg_t;
-      CHECK(zmq_msg_init(zmsg) == 0) << zmq_strerror(errno);
-      while (true) {
-        if (zmq_msg_recv(zmsg, receiver_, 0) != -1) break;
-        if (errno == EINTR) {
-          std::cout << "interrupted";
-          continue;
+    if (rdma_ready_)
+    {
+      recv_node node;
+      rdma_.RecvData(&node);
+      char *addr = node.addr;
+      size_t recv_bytes = (int)node.recv_bytes;
+      msg->data.clear();
+      msg->meta.sender = node.sender;
+      msg->meta.recver = my_node_.id;
+      size_t temp_size = 0;
+      size_t recv_size = 0;
+      for (int i = 0;; i++)
+      {
+        if (i == 0)
+        {
+          size_t meta_size = *((int*)addr);
+          temp_size += sizeof(int);
+          UnpackMeta(addr + temp_size, meta_size, &(msg->meta));
+          temp_size += meta_size;
+          recv_size += meta_size;
         }
-        LOG(WARNING) << "failed to receive message. errno: "
-                     << errno << " " << zmq_strerror(errno);
-        return -1;
+        else
+        {
+          if (temp_size == recv_bytes)
+            break;
+          size_t data_size = *((int*)(addr + temp_size));
+          temp_size += sizeof(int);
+          //SArray<char> data(addr+temp_size, data_size, false);
+          SArray<char> data;
+          data.CopyFrom(addr+temp_size, data_size);
+          msg->data.push_back(data);
+          temp_size += data_size;
+          recv_size += data_size;
+        }
       }
-      char* buf = CHECK_NOTNULL((char *)zmq_msg_data(zmsg));
-      size_t size = zmq_msg_size(zmsg);
-      recv_bytes += size;
-
-      if (i == 0) {
-        // identify
-        msg->meta.sender = GetNodeID(buf, size);
-        msg->meta.recver = my_node_.id;
-        CHECK(zmq_msg_more(zmsg));
-        zmq_msg_close(zmsg);
-        delete zmsg;
-      } else if (i == 1) {
-        // task
-        UnpackMeta(buf, size, &(msg->meta));
-        zmq_msg_close(zmsg);
-        bool more = zmq_msg_more(zmsg);
-        delete zmsg;
-        if (!more) break;
-      } else {
-        // zero-copy
-        SArray<char> data;
-        data.reset(buf, size, [zmsg, size](char* buf) {
-            zmq_msg_close(zmsg);
-            delete zmsg;
-          });
-        msg->data.push_back(data);
-        if (!zmq_msg_more(zmsg)) { break; }
-      }
+      return (int)recv_bytes;    
     }
-    return recv_bytes;
+    else
+    {
+      msg->data.clear();
+      size_t recv_bytes = 0;
+      for (int i = 0; ; ++i) {
+        zmq_msg_t* zmsg = new zmq_msg_t;
+        CHECK(zmq_msg_init(zmsg) == 0) << zmq_strerror(errno);
+        while (true) {
+          //if no message zmq_msg_recv will block
+          if (zmq_msg_recv(zmsg, receiver_, 0) != -1) break;
+          if (errno == EINTR) continue;
+          LOG(WARNING) << "failed to receive message. errno: "
+                       << errno << " " << zmq_strerror(errno);
+          return -1;
+        }
+        char* buf = CHECK_NOTNULL((char *)zmq_msg_data(zmsg));
+        size_t size = zmq_msg_size(zmsg);
+        recv_bytes += size;
+
+        if (i == 0) {
+          // identify
+          msg->meta.sender = GetNodeID(buf, size);
+          msg->meta.recver = my_node_.id;
+          CHECK(zmq_msg_more(zmsg));
+          zmq_msg_close(zmsg);
+          delete zmsg;
+        } else if (i == 1) {
+          // task
+          UnpackMeta(buf, size, &(msg->meta));
+          zmq_msg_close(zmsg);
+          bool more = zmq_msg_more(zmsg);
+          delete zmsg;
+          if (!more) break;
+        } else {
+          // zero-copy
+          SArray<char> data;
+          data.reset(buf, size, [zmsg, size](char* buf) {
+              zmq_msg_close(zmsg);
+              delete zmsg;
+            });
+          msg->data.push_back(data);
+          if (!zmq_msg_more(zmsg)) { break; }
+        }
+      }
+      return recv_bytes;
+    }
   }
 
  private:

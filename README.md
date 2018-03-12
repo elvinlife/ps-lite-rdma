@@ -1,11 +1,9 @@
-<img src="http://parameterserver.org/images/parameterserver.png"  width=400 />
-
-[![Build Status](https://travis-ci.org/dmlc/ps-lite.svg?branch=master)](https://travis-ci.org/dmlc/ps-lite)
-[![GitHub license](http://dmlc.github.io/img/apache2.svg)](./LICENSE)
+### Introduction for ps-lite
 
 A light and efficient implementation of the parameter server
 framework. It provides clean yet powerful APIs. For example, a worker node can
 communicate with the server nodes by
+
 - `Push(keys, values)`: push a list of (key, value) pairs to the server nodes
 - `Pull(keys)`: pull the values from servers for a list of keys
 - `Wait`: wait untill a push or pull finished.
@@ -26,70 +24,51 @@ More features:
 - Flexible and high-performance communication: zero-copy push/pull, supporting
   dynamic length values, user-defined filters for communication compression
 - Server-side programming: supporting user-defined handles on server nodes
+- Add rdma tech for communication using `<infiniband/verbs.h>`
+
 
 ### Build
 
-`ps-lite` requires a C++11 compiler such as `g++ >= 4.8`. On Ubuntu >= 13.10, we
-can install it by
-```
-sudo apt-get update && sudo apt-get install -y build-essential git
-```
-Instructions for
-[older Ubuntu](http://ubuntuhandbook.org/index.php/2013/08/install-gcc-4-8-via-ppa-in-ubuntu-12-04-13-04/),
-[Centos](http://linux.web.cern.ch/linux/devtoolset/),
-and
-[Mac Os X](http://hpc.sourceforge.net/).
+`ps-lite-rdma` requires a C++11 compiler such as `g++ >= 4.8`. 
 
 Then clone and build
 
 ```bash
-git clone https://github.com/dmlc/ps-lite
-cd ps-lite && make -j4
+git clone https://github.com/elvinlife/ps-lite-rdma.git
+cd ps-lite-rdma && make -j
 ```
 
-### How to use
+### Test
 
-`ps-lite` provides asynchronous communication for other projects: 
-  - Distributed deep neural networks:
-    [MXNet](https://github.com/dmlc/mxnet),
-    [CXXNET](https://github.com/dmlc/cxxnet) and
-    [Minverva](https://github.com/minerva-developers/minerva)
-  - Distributed high dimensional inference, such as sparse logistic regression,
-    factorization machines:
-    [DiFacto](https://github.com/dmlc/difacto)
-    [Wormhole](https://github.com/dmlc/wormhole)
+You can test the ps-lite-rdma performance using the shell script provided in test-rdma.
 
-### History
+Before testing, you should set `NUM`, `BUGINFO`, `TESTFILE`
 
-We started to work on the parameter server framework since 2010.
+* test local performance:
 
-1. The first generation was
-designed and optimized for specific algorithms, such as logistic regression and
-LDA, to serve the sheer size industrial machine learning tasks (hundreds billions of
-examples and features with 10-100TB data size) .
+```shell
+make local
+```
 
-2. Later we tried to build a open-source general purpose framework for machine learning
-algorithms. The project is available at [dmlc/parameter_server](https://github.com/dmlc/parameter_server).
+* test multiple machines performance
+  * for scheduler
 
-3. Given the growing demands from other projects, we created `ps-lite`, which provides a clean data communication API and a
-lightweight implementation. The implementation is based on `dmlc/parameter_server`, but we refactored the job launchers, file I/O and machine
-learning algorithms codes into different projects such as `dmlc-core` and
-`wormhole`.
+  ```shell
+  make scheduler
+  ```
 
-4. From the experience we learned during developing
-   [dmlc/mxnet](https://github.com/dmlc/mxnet), we further refactored the API and implementation from [v1](https://github.com/dmlc/ps-lite/releases/tag/v1). The main
-   changes include
-   - less library dependencies
-   - more flexible user-defined callbacks, which facilitate other language
-   bindings
-   - let the users, such as the dependency
-     engine of mxnet, manage the data consistency
+  * for server
 
-### Research papers
-  1. Mu Li, Dave Andersen, Alex Smola, Junwoo Park, Amr Ahmed, Vanja Josifovski,
-     James Long, Eugene Shekita, Bor-Yiing
-     Su. [Scaling Distributed Machine Learning with the Parameter Server](http://www.cs.cmu.edu/~muli/file/parameter_server_osdi14.pdf). In
-     Operating Systems Design and Implementation (OSDI), 2014
-  2. Mu Li, Dave Andersen, Alex Smola, and Kai
-     Yu. [Communication Efficient Distributed Machine Learning with the Parameter Server](http://www.cs.cmu.edu/~muli/file/parameter_server_nips14.pdf). In
-     Neural Information Processing Systems (NIPS), 2014
+  ```shell
+  make server
+  ```
+
+  * for worker
+
+  ```shell
+  make worker
+  ```
+
+### Others
+
+The other part of readme is the same as that in original ps-lite.

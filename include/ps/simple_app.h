@@ -20,8 +20,6 @@ struct SimpleData {
   int sender;
   /** \brief the associated timestamp */
   int timestamp;
-  /** \brief sender's customer id */
-  int customer_id;
 };
 
 /**
@@ -34,10 +32,9 @@ class SimpleApp {
   /**
    * \brief constructor
    * @param app_id the app id, should match with the remote node app with which this app
-   * @param customer_id the customer_id, should be node-locally unique
    * is communicated
    */
-  explicit SimpleApp(int app_id, int customer_id);
+  explicit SimpleApp(int app_id);
 
   /** \brief deconstructor */
   virtual ~SimpleApp() { delete obj_; obj_ = nullptr; }
@@ -123,9 +120,9 @@ class SimpleApp {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-inline SimpleApp::SimpleApp(int app_id, int customer_id) : SimpleApp() {
+inline SimpleApp::SimpleApp(int app_id) : SimpleApp() {
   using namespace std::placeholders;
-  obj_ = new Customer(app_id, customer_id, std::bind(&SimpleApp::Process, this, _1));
+  obj_ = new Customer(app_id, std::bind(&SimpleApp::Process, this, _1));
 }
 
 inline int SimpleApp::Request(int req_head, const std::string& req_body, int recv_id) {
@@ -137,8 +134,7 @@ inline int SimpleApp::Request(int req_head, const std::string& req_body, int rec
   msg.meta.timestamp = ts;
   msg.meta.request = true;
   msg.meta.simple_app = true;
-  msg.meta.app_id = obj_->app_id();
-  msg.meta.customer_id = obj_->customer_id();
+  msg.meta.customer_id = obj_->id();
 
   // send
   for (int r : Postoffice::Get()->GetNodeIDs(recv_id)) {
@@ -156,8 +152,7 @@ inline void SimpleApp::Response(const SimpleData& req, const std::string& res_bo
   msg.meta.timestamp = req.timestamp;
   msg.meta.request = false;
   msg.meta.simple_app = true;
-  msg.meta.app_id = obj_->app_id();
-  msg.meta.customer_id = req.customer_id;
+  msg.meta.customer_id = obj_->id();
   msg.meta.recver = req.sender;
 
   // send
@@ -171,7 +166,6 @@ inline void SimpleApp::Process(const Message& msg) {
   recv.head      = msg.meta.head;
   recv.body      = msg.meta.body;
   recv.timestamp = msg.meta.timestamp;
-  recv.customer_id = msg.meta.customer_id;
   if (msg.meta.request) {
     CHECK(request_handle_);
     request_handle_(recv, this);

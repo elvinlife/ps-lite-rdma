@@ -86,8 +86,6 @@ struct Node {
   Role role;
   /** \brief node id */
   int id;
-  /** \brief customer id */
-  int customer_id;
   /** \brief hostname or ip */
   std::string hostname;
   /** \brief the port this node is binding */
@@ -107,7 +105,7 @@ struct Control {
   std::string DebugString() const {
     if (empty()) return "";
     std::vector<std::string> cmds = {
-      "EMPTY", "TERMINATE", "ADD_NODE", "BARRIER", "ACK", "HEARTBEAT"};
+      "EMPTY", "TERMINATE", "ADD_NODE", "BARRIER", "ACK", "HEARTBEAT", "INIT_RDMA"};
     std::stringstream ss;
     ss << "cmd=" << cmds[cmd];
     if (node.size()) {
@@ -120,7 +118,7 @@ struct Control {
     return ss.str();
   }
   /** \brief all commands */
-  enum Command { EMPTY, TERMINATE, ADD_NODE, BARRIER, ACK, HEARTBEAT };
+  enum Command { EMPTY, TERMINATE, ADD_NODE, BARRIER, ACK, HEARTBEAT, INIT_RDMA };
   /** \brief the command */
   Command cmd;
   /** \brief node infos */
@@ -137,9 +135,9 @@ struct Meta {
   /** \brief the empty value */
   static const int kEmpty;
   /** \brief default constructor */
-  Meta() : head(kEmpty), app_id(kEmpty), customer_id(kEmpty),
-           timestamp(kEmpty), sender(kEmpty), recver(kEmpty),
-           request(false), push(false), simple_app(false) {}
+  Meta() : head(kEmpty), customer_id(kEmpty), timestamp(kEmpty),
+           sender(kEmpty), recver(kEmpty),
+           request(false), simple_app(false) {}
   std::string DebugString() const {
     std::stringstream ss;
     if (sender == Node::kEmpty) {
@@ -153,8 +151,7 @@ struct Meta {
     if (!control.empty()) {
       ss << ", control={ " << control.DebugString() << " }";
     } else {
-      ss << ", app_id=" << app_id
-         << ", customer_id=" << customer_id
+      ss << ", customer_id=" << customer_id
          << ", simple_app=" << simple_app
          << ", push=" << push;
     }
@@ -169,9 +166,7 @@ struct Meta {
   }
   /** \brief an int head */
   int head;
-  /** \brief the unique id of the application of messsage is for*/
-  int app_id;
-  /** \brief customer id*/
+  /** \brief the unique id of the customer is messsage is for*/
   int customer_id;
   /** \brief the timestamp of this message */
   int timestamp;

@@ -1,4 +1,5 @@
 #include "ps/ps.h"
+#include <sys/time.h>
 using namespace ps;
 
 void StartServer() {
@@ -10,10 +11,10 @@ void StartServer() {
 
 void RunWorker() {
   if (!IsWorker()) return;
-  KVWorker<float> kv(0, 0);
+  KVWorker<float> kv(0);
 
   // init
-  int num = 10000;
+  int num = 1000000;
   std::vector<Key> keys(num);
   std::vector<float> vals(num);
 
@@ -25,7 +26,8 @@ void RunWorker() {
   }
 
   // push
-  int repeat = 50;
+  int repeat = 1000;
+  //c: timestamp
   std::vector<int> ts;
   for (int i = 0; i < repeat; ++i) {
     ts.push_back(kv.Push(keys, vals));
@@ -51,10 +53,18 @@ int main(int argc, char *argv[]) {
   // setup server nodes
   StartServer();
   // start system
-  Start(0);
+  Start();
   // run worker nodes
+  struct timeval tp;
+  gettimeofday(&tp, NULL);
+  unsigned long start_msec, end_msec;
+  start_msec = tp.tv_sec * 1000 + tp.tv_usec / 1000;
   RunWorker();
   // stop system
-  Finalize(0, true);
+  Finalize();
+  
+  gettimeofday(&tp, NULL);
+  end_msec = tp.tv_sec * 1000 + tp.tv_usec / 1000;
+  fprintf(stdout, "Finish communication, millseconds:%lu\n", end_msec - start_msec);
   return 0;
 }
