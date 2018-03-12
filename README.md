@@ -24,7 +24,7 @@ More features:
 - Flexible and high-performance communication: zero-copy push/pull, supporting
   dynamic length values, user-defined filters for communication compression
 - Server-side programming: supporting user-defined handles on server nodes
-- Add rdma tech for communication using `<infiniband/verbs.h>`
+- Support for 
 
 
 ### Build
@@ -35,40 +35,27 @@ Then clone and build
 
 ```bash
 git clone https://github.com/elvinlife/ps-lite-rdma.git
-cd ps-lite-rdma && make -j
+cd ps-lite-rdma && make -j4
 ```
 
 ### Test
 
-You can test the ps-lite-rdma performance using the shell script provided in test-rdma.
+You can test the ps-lite-rdma performance using the shell script provided in `./tests-rdma`.
 
-Before testing, you should set `NUM`, `BUGINFO`, `TESTFILE`
+* for local machine
 
-* test local performance:
-
-```shell
-make local
+```
+./s_tests-rdma/rdma_local.sh [# of servers] [# of workers] [bin to test] [args...]
 ```
 
-* test multiple machines performance
-  * for scheduler
+* for multiple machines
 
-  ```shell
-  make scheduler
-  ```
+  same as local machine, just change the script file according to the role of the current machine
 
-  * for server
+### About
 
-  ```shell
-  make server
-  ```
+This is the core source code for USTC team in The 5th Student RDMA Programming Competition. Our team won the first prize in the end.
 
-  * for worker
 
-  ```shell
-  make worker
-  ```
-
-### Others
-
-The other part of readme is the same as that in original ps-lite.
+​				
+​			
